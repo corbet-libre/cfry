@@ -1,0 +1,38 @@
+[package]
+name = "cfry"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Ferry: bounded message framing and stream lifecycle for Tor"
+license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
+repository = "https://github.com/corbet-foss/cfry"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+futures = "0.3"
+yamux = "0.14"
+bytes = "1.10"
+tokio-util = { version = "0.7", default-features = false, features = ["codec", "compat"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-futures = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["io-util"] }
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "io-util", "time", "test-util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
