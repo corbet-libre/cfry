@@ -94,17 +94,20 @@ impl Peer {
         stream.send_frame(&bytes).await?;
         Ok(stream)
     }
-    /// Submit one message. Completion is local I/O, never durable peer acceptance.
+    /// Submit one message and finish its transport half-close exchange.
+    /// Completion never proves application processing or durable acceptance.
     pub async fn app_message(&self, payload: &[u8]) -> Result<(), Error> {
-        self.begin(Request::Message(payload)).await?.finish().await
+        let stream = self.begin(Request::Message(payload)).await?;
+        drain_sent(stream).await
     }
     /// Submit one request and return one bounded opaque reply. Never retries.
     pub async fn app_call(&self, payload: &[u8]) -> Result<Vec<u8>, Error> {
         let mut stream = self.begin(Request::Call(payload)).await?;
         let reply = stream.next_frame().await?.ok_or(PROTOCOL)?;
         self.limits.check(&reply)?;
-        // A complete reply resolves the call; cleanup must not turn it into an
-        // uncertain failure merely because the responder has closed the session.
+        // The complete reply resolves the call. A best-effort FIN releases the
+        // sender; cleanup failure cannot discard already received valid bytes.
+        let _ = stream.finish().await;
         Ok(reply)
     }
     /// Receive a complete message or request; payload authorization is the caller's job.
@@ -123,10 +126,10 @@ impl Peer {
         match request {
             Request::Message(payload) => {
                 self.limits.check(payload)?;
-                // The complete one-way payload is already received. It carries
-                // no reply: a sender may have closed its session after flushing.
-                // Requiring a successful outbound FIN here would discard valid
-                // bytes solely because their sender has gone away.
+                // Existing yamux FIN, not an application ACK: release the sender
+                // only after consuming its complete frame. Keep valid received
+                // bytes even if best-effort cleanup fails.
+                let _ = stream.finish().await;
                 Ok(Received::Message(payload.to_vec()))
             }
             Request::Call(payload) => {
@@ -176,6 +179,17 @@ impl Reply {
     pub async fn send(mut self, payload: &[u8]) -> Result<(), Error> {
         self.limits.check(payload)?;
         self.stream.send_frame(payload).await?;
-        self.stream.finish().await
+        drain_sent(*self.stream).await
     }
+}
+
+// A yamux Stream flush only queues stream commands. Dropping the whole byte
+// connection immediately can make its delayed peer fail before reading them.
+// Reuse yamux's FIN in both directions before releasing the original session.
+async fn drain_sent(mut stream: FramedStream<Substream>) -> Result<(), Error> {
+    stream.finish_writing().await?;
+    if stream.next_frame().await?.is_some() {
+        return Err(PROTOCOL);
+    }
+    Ok(())
 }

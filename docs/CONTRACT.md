@@ -46,3 +46,13 @@ in ways that can report a missed branch even when another instantiation covered
 the same source branch; this gate explicitly measures source coverage, not every
 generic instantiation. No line or branch is excluded and both targets remain 100%.
 Native measurement does not substitute for the separately executed Wasm vectors.
+
+
+Complete-message send/reply keeps the byte session alive through the existing
+yamux FIN exchange. A stream flush queues yamux commands; closing the byte peer
+immediately could make a delayed receiver fail on its initial control write
+before reading the queued payload. This uses maintained yamux half-close, adds no
+receipt format and never claims application processing or durable delivery. A
+malformed extra response to a one-way message fails; timeout/cancellation closes
+without replay. The controlled delayed-runtime vector reproduces the original
+failure and runs natively and in Wasm. Real Tor independently gates integration.

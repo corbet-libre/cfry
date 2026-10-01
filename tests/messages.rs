@@ -246,10 +246,15 @@ async fn live_substreams_obey_yamux_capacity() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn already_received_one_way_payload_survives_sender_session_close() {
     let (a, b) = pair();
-    a.app_message(b"complete-before-close").await.unwrap();
-    a.close().await.unwrap();
-    drop(a);
-    let Received::Message(payload) = b.next().await.unwrap() else {
+    let ((), received) = futures::join!(
+        async {
+            a.app_message(b"complete-before-close").await.unwrap();
+            a.close().await.unwrap();
+            drop(a);
+        },
+        b.next()
+    );
+    let Received::Message(payload) = received.unwrap() else {
         panic!("complete one-way payload expected")
     };
     assert_eq!(payload, b"complete-before-close");
@@ -319,4 +324,96 @@ async fn session_close_reports_underlying_transport_failure() {
     );
     assert_eq!(session.next_event().await, Some(SessionEvent::Closed));
     assert_eq!(session.next_event().await, None);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn a_complete_one_way_frame_survives_sender_close_before_receiver_scheduling() {
+    // The external byte pipe buffers the full small exchange, then refuses writes
+    // once its remote endpoint is gone. This reproduces a delayed Tor receiver.
+    let (a, b) = tokio::io::duplex(65536);
+    let limits = MessageLimits {
+        max_payload: 1024,
+        timeout_ms: 1000,
+    };
+    let (a, ad) = Peer::new(Box::new(a.compat()), Role::Dialer, Arc::new(Time), limits).unwrap();
+    let (b, bd) = Peer::new(Box::new(b.compat()), Role::Listener, Arc::new(Time), limits).unwrap();
+    use futures::FutureExt;
+    let mut ad = ad;
+    let mut sending = Box::pin(a.app_message(b"delayed receiver"));
+    // Drive all locally buffered work while the remote runtime is unscheduled.
+    // The sender must retain the connection until the remote drains its frame.
+    for _ in 0..8 {
+        assert!(sending.as_mut().now_or_never().is_none());
+        assert!(ad.as_mut().now_or_never().is_none());
+    }
+    spawn(ad);
+    spawn(bd);
+    let (sent, received) = futures::join!(sending, b.next());
+    sent.unwrap();
+    a.close().await.unwrap();
+    drop(a);
+    let Received::Message(payload) = received.unwrap() else {
+        panic!("message expected")
+    };
+    assert_eq!(payload, b"delayed receiver");
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn one_way_peer_cannot_inject_a_reply_during_transport_close() {
+    let (a, b) = tokio::io::duplex(64);
+    let (sender, ad) = Peer::new(
+        Box::new(a.compat()),
+        Role::Dialer,
+        Arc::new(Time),
+        MessageLimits {
+            max_payload: 1024,
+            timeout_ms: 1000,
+        },
+    )
+    .unwrap();
+    let (receiver, bd) = cfry::Session::new(Box::new(b.compat()), Role::Listener);
+    spawn(ad);
+    spawn(bd);
+    let attack = async {
+        let stream = receiver.accept().await.unwrap();
+        let mut stream = cfry::streams::FramedStream::open(
+            stream,
+            cfry::streams::Limits {
+                max_frame_bytes: 1040,
+                timeout_ms: 1000,
+            },
+            Arc::new(Time),
+        )
+        .unwrap();
+        assert!(stream.next_frame().await.unwrap().is_some());
+        stream
+            .send_frame(b"unexpected application reply")
+            .await
+            .unwrap();
+        stream.finish().await.unwrap();
+    };
+    let (sent, ()) = futures::join!(sender.app_message(b"one-way"), attack);
+    assert_eq!(sent.unwrap_err().kind(), cfry::ErrorKind::Protocol);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn graceful_close_waits_for_real_byte_backpressure_to_drain() {
+    use futures::{FutureExt, io::AsyncReadExt};
+    let (a, b) = tokio::io::duplex(1);
+    let (session, mut driver) = cfry::Session::new(Box::new(a.compat()), Role::Dialer);
+    let mut closing = Box::pin(session.close());
+    assert!(closing.as_mut().now_or_never().is_none());
+    // The one-byte external pipe cannot accept the complete yamux close frame.
+    assert!(driver.as_mut().now_or_never().is_none());
+    assert!(closing.as_mut().now_or_never().is_none());
+    spawn(driver);
+    let mut b = b.compat();
+    let mut wire = Vec::new();
+    let (closed, drained) = futures::join!(closing, b.read_to_end(&mut wire));
+    closed.unwrap();
+    assert!(drained.unwrap() > 1);
+    assert_eq!(session.next_event().await, Some(SessionEvent::Closed));
 }

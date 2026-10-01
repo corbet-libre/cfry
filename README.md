@@ -5,10 +5,26 @@ Ferry turns Tor byte streams into complete bounded messages. Its home is
 
 ## Scope
 
-Own framing, partial reads, backpressure and stream lifecycle below the Tor
-backend. Reuse maintained codecs and stream multiplexing. Never interpret
-profiles, messages, delivery receipts, record policy or cryptographic authority;
-never select a network or retain application payloads.
+**Purpose and home.** Turn Tor byte streams into complete, size-bounded messages
+under `cmsh → ctrn → cfry`. Veilid speaks messages natively and does not need Ferry.
+
+**Owns.** Framing, partial reads, backpressure and stream lifecycle using maintained
+length-delimited codecs and yamux. Byte I/O and a monotonic clock enter; bounded
+messages and one-use replies leave.
+
+**Never.** Interpret application content, authority or record policy; select a
+network; retain application payloads; retry an effect after cancellation or
+uncertain partial I/O.
+
+**States and invariants.** Opening → Open → Draining → Closed. Malformed input,
+deadline, cancellation or I/O failure closes the affected stream. Partial frames
+never become messages; local completion never claims recipient acceptance.
+
+**Test obligations.** Native and actual Wasm split/coalesced/partial frames, bounds
+before allocation, half-close/cancellation cleanup and controlled alternative byte
+I/O. Slow peers stay within 64 streams and 16 MiB receive credit. Tor independently
+proves real native/browser onion integration. Both reachable line and branch
+coverage target 100% without production exclusions.
 
 ## Validation
 

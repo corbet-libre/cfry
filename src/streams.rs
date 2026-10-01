@@ -116,9 +116,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FramedStream<S> {
 
     /// Flush, signal EOF and release the stream. A dropped future fails closed.
     pub async fn finish(&mut self) -> Result<(), Error> {
+        self.finish_writing().await?;
+        self.io = None;
+        self.state = State::Closed;
+        Ok(())
+    }
+
+    /// Keep the read half alive while the peer finishes its transport work.
+    pub(crate) async fn finish_writing(&mut self) -> Result<(), Error> {
         let mut io = self.take()?;
-        // Draining is represented by the operation itself. Keep Failed as the
-        // stored state until completion so cancellation is unambiguous.
         within(
             &*self.clock,
             &mut self.last_tick,
@@ -126,7 +132,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FramedStream<S> {
             async { io.close().await.map_err(|_| BROKEN) },
         )
         .await?;
-        self.state = State::Closed;
+        self.io = Some(io);
+        self.state = State::Open;
         Ok(())
     }
 
