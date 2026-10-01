@@ -145,7 +145,7 @@ jobs:
 
         cargo llvm-cov report --branch --ignore-filename-regex ''/tests/'' --text --output-path coverage.txt'
     - name: Require complete line and branch coverage
-      run: python3 .github/check-coverage.py coverage.lcov
+      run: python3 .github/check-source-coverage.py coverage.lcov coverage.json
     - uses: actions/upload-artifact@v7
       if: always()
       with:
