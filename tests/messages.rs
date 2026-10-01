@@ -276,3 +276,47 @@ async fn cancelled_queued_commands_keep_their_capacity_until_consumed() {
     spawn(driver);
     session.close().await.unwrap();
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn session_close_reports_underlying_transport_failure() {
+    struct Failing;
+    impl futures::io::AsyncRead for Failing {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+    }
+    impl futures::io::AsyncWrite for Failing {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+        }
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+        }
+    }
+    let (session, driver) = cfry::Session::new(Box::new(Failing), Role::Dialer);
+    spawn(driver);
+    assert_eq!(
+        session.close().await.unwrap_err().kind(),
+        cfry::ErrorKind::Closed
+    );
+    assert_eq!(session.next_event().await, Some(SessionEvent::Closed));
+    assert_eq!(session.next_event().await, None);
+}

@@ -53,6 +53,7 @@ struct Wire {
     output: Arc<Mutex<Vec<u8>>>,
     dropped: Arc<AtomicBool>,
     stall: bool,
+    close_error: bool,
 }
 impl Drop for Wire {
     fn drop(&mut self) {
@@ -91,7 +92,11 @@ impl AsyncWrite for Wire {
         Poll::Ready(Ok(()))
     }
     fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+        if self.close_error {
+            Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+        } else {
+            Poll::Ready(Ok(()))
+        }
     }
 }
 fn wire(input: Vec<u8>, split: usize, stall: bool) -> Wire {
@@ -102,6 +107,7 @@ fn wire(input: Vec<u8>, split: usize, stall: bool) -> Wire {
         output: Arc::default(),
         dropped: Arc::default(),
         stall,
+        close_error: false,
     }
 }
 fn stream(wire: Wire, clock: Arc<Time>) -> FramedStream<Wire> {
@@ -324,4 +330,23 @@ fn closed_push_codec_refuses_a_second_finish() {
     let mut codec = FrameCodec::new(64).unwrap();
     codec.finish().unwrap();
     assert!(codec.finish().is_err());
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn failed_transport_close_is_terminal_without_retry() {
+    let mut io = wire(vec![], 1, false);
+    io.close_error = true;
+    let dropped = io.dropped.clone();
+    let mut s = stream(io, Arc::default());
+    assert_eq!(
+        ready(s.finish()).unwrap_err().kind(),
+        cfry::ErrorKind::Protocol
+    );
+    assert_eq!(s.state(), State::Failed);
+    assert!(dropped.load(Ordering::SeqCst));
+    assert_eq!(
+        ready(s.finish()).unwrap_err().kind(),
+        cfry::ErrorKind::Closed
+    );
 }

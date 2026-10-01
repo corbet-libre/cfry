@@ -52,7 +52,7 @@ struct Opening {
 }
 enum Command {
     Open(Opening),
-    Close(oneshot::Sender<()>, Permit),
+    Close(oneshot::Sender<Result<(), Error>>, Permit),
 }
 
 /// A multiplexed session: open and accept independent substreams.
@@ -144,7 +144,7 @@ impl Session {
             .send(Command::Close(reply, permit))
             .await
             .map_err(|_| CLOSED)?;
-        done.await.map_err(|_| CLOSED)
+        done.await.map_err(|_| CLOSED)?
     }
 }
 
@@ -155,7 +155,7 @@ struct Driver {
     commands_done: bool,
     inbound: mpsc::Sender<yamux::Stream>,
     opening: VecDeque<Opening>,
-    closing: Vec<(oneshot::Sender<()>, Permit)>,
+    closing: Vec<(oneshot::Sender<Result<(), Error>>, Permit)>,
 }
 
 impl Driver {
@@ -178,8 +178,8 @@ impl Driver {
             }
             if self.commands_done || !self.closing.is_empty() {
                 return match self.connection.poll_close(cx) {
-                    Poll::Ready(_) => {
-                        self.finish();
+                    Poll::Ready(result) => {
+                        self.finish(result.map_err(|_| CLOSED));
                         Poll::Ready(())
                     }
                     Poll::Pending => Poll::Pending,
@@ -203,7 +203,7 @@ impl Driver {
                     }
                     Err(_) => {
                         let _ = opening.reply.send(Err(CLOSED));
-                        self.finish();
+                        self.finish(Err(CLOSED));
                         return Poll::Ready(());
                     }
                 }
@@ -216,7 +216,7 @@ impl Driver {
                     let _ = self.inbound.try_send(stream);
                 }
                 Poll::Ready(Some(Err(_))) | Poll::Ready(None) => {
-                    self.finish();
+                    self.finish(Err(CLOSED));
                     return Poll::Ready(());
                 }
                 Poll::Pending => {}
@@ -227,7 +227,7 @@ impl Driver {
         }
     }
 
-    fn finish(&mut self) {
+    fn finish(&mut self, close_result: Result<(), Error>) {
         if let Some(mut event) = self.event.take() {
             let _ = event.try_send(SessionEvent::Closed);
         }
@@ -235,7 +235,7 @@ impl Driver {
             let _ = opening.reply.send(Err(CLOSED));
         }
         for (reply, _permit) in self.closing.drain(..) {
-            let _ = reply.send(());
+            let _ = reply.send(close_result);
         }
         self.inbound.close_channel();
     }
@@ -243,7 +243,7 @@ impl Driver {
 
 impl Drop for Driver {
     fn drop(&mut self) {
-        self.finish();
+        self.finish(Err(CLOSED));
     }
 }
 
