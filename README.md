@@ -5,26 +5,25 @@ Ferry turns Tor byte streams into complete bounded messages. Its home is
 
 ## Scope
 
-**Purpose and home.** Turn Tor byte streams into complete, size-bounded messages
-under `cmsh → ctrn → cfry`. Veilid speaks messages natively and does not need Ferry.
+Purpose
 
-**Owns.** Framing, partial reads, backpressure and stream lifecycle using maintained
-length-delimited codecs and yamux. Byte I/O and a monotonic clock enter; bounded
-messages and one-use replies leave.
+Turns Tor byte streams into complete, size-bounded messages.
 
-**Never.** Interpret application content, authority or record policy; select a
-network; retain application payloads; retry an effect after cancellation or
-uncertain partial I/O.
+Owns
 
-**States and invariants.** Opening → Open → Draining → Closed. Malformed input,
-deadline, cancellation or I/O failure closes the affected stream. Partial frames
-never become messages; local completion never claims recipient acceptance.
+Framing, partial reads, backpressure, and stream lifecycle, built on maintained length-delimited framing and yamux. Byte I/O and a monotonic clock go in; bounded messages and one-use replies come out.
 
-**Test obligations.** Native and actual Wasm split/coalesced/partial frames, bounds
-before allocation, half-close/cancellation cleanup and controlled alternative byte
-I/O. Slow peers stay within 64 streams and 16 MiB receive credit. Tor independently
-proves real native/browser onion integration. Both reachable line and branch
-coverage target 100% without production exclusions.
+Never
+
+Interprets profiles, messages, receipts, records, or authority; selects a network; keeps payloads; retries an effect after cancellation or uncertain partial I/O. Veilid speaks messages natively and does not need this library.
+
+States
+
+Opening to Open to Draining to Closed. Malformed input, deadline, cancellation, or network error closes the affected stream as failed. Partial frames never become messages.
+
+Test obligations
+
+Split, coalesced, and partial reads reproduce frames on native and Wasm with identical vectors. Oversized lengths are rejected before allocation. Half-close and cancellation release resources. Slow peers stay within memory bounds of 64 streams and 16 MiB credit. The same suite runs against a controlled alternative byte adapter. Full line and branch coverage with real round trips and no mocks of this library's logic, injected delay, duplication, loss, cancellation, clock regression, and corruption, bounded parsing, queues, and work, errors that omit identifiers, plaintext, and secrets, reuse of maintained third-party code, and no own cryptography.
 
 ## Validation
 
