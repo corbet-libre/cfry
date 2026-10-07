@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.95"
 description = "Ferry: bounded message framing and stream lifecycle for Tor"
 license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
-repository = "https://github.com/corbet-foss/cfry"
+repository = "https://git.corbet.ch/corbet-foss/cfry"
 publish = false
 
 [lib]
