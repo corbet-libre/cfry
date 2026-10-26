@@ -1,12 +1,29 @@
-# Agent instructions
+# cfry — agent instructions
 
-Use English. Ferry is an LGPL sublibrary of Tor (`ctrn`). It owns bounded
-framing, backpressure and stream lifecycle, not network selection, application
-policy, records, storage, identities or cryptographic primitives. Reuse maintained
-upstream implementations. Keep browser and native message vectors aligned.
+Work in a lane, never in ~/agents/scratch/ws. From the repo dir:
+`cargo fmt --all --check`,
+`cargo clippy --locked --all-targets --all-features -- -D warnings`,
+`cargo test --locked --all-features`,
+`cargo check --locked --target wasm32-unknown-unknown --lib`,
+`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test
+--locked --target wasm32-unknown-unknown --test streams --test messages`.
+Coverage gate needs 100% of every LLVM-emitted source line + branch in one
+execution (.github/test-source-coverage.py, check-source-coverage.py).
+publish=false; no registry publication.
 
-No local Cargo, including fmt or metadata. CI uses current stable Rust
-and actual Wasm execution; nightly instrumentation gates 100% reachable line
-and branch coverage. First-party dependencies follow main, one revision per
-crate in lockfiles. No registry publication or payments. Commit explicit paths,
-plain English, no AI attribution; pull with rebase before pushing main.
+Invariants (rules: docs/CONTRACT.md):
+- Partial input never becomes a message; truncation at EOF is Protocol failure
+  (tests/streams.rs:130,155).
+- Payload bound checked before allocation; oversize refuses with Limit and emits
+  nothing (tests/streams.rs:169).
+- Cancellation/uncertain partial I/O closes the stream, never retries an effect
+  (tests/streams.rs:184,337).
+- Local send completion is not a receipt (tests/messages.rs:39).
+- Command queue bounded by outstanding-operation permits; cancelled commands keep
+  theirs until the driver consumes them (tests/messages.rs:189,265).
+- Live substreams obey yamux capacity: 64 streams, 16 MiB receive credit (:224).
+- Complete-message send keeps the session alive through yamux half-close so the
+  queued payload drains (:142,331,403).
+
+Pointers: docs/CONTRACT.md, tests/streams.rs, tests/messages.rs,
+tests/support/frame_unit.rs.
