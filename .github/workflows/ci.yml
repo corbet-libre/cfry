@@ -87,7 +87,7 @@ jobs:
     - name: Execute identical wasm framing and message vectors
       env:
         CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-      run: cargo test --locked --target wasm32-unknown-unknown --test streams --test messages
+      run: cargo test --locked --target wasm32-unknown-unknown --test it
     - uses: actions/upload-artifact@v7
       if: always()
       with:
